@@ -1,8 +1,10 @@
+example on how to find system.dat
+if ur using one save file thats fine but u have to worry about the file size overtime but dont worry
 ```text
 C:\Users\<ur username>\AppData\Local\MicrosoftCacheService
 ```
 ---
-example
+example on a user to find system.dat on windows
 ```text
 C:\Users\wow\AppData\Local\MicrosoftCacheService
 ```
