@@ -1,5 +1,3 @@
-# backend.py
-
 from Pipeline import Pipeline
 from DataStore import AdvancedSecureDataStore
 
@@ -8,18 +6,12 @@ class Backend:
     def __init__(self, file_name="system.dat"):
         self.data = AdvancedSecureDataStore(file_name)
 
-    # ==================================================
-    # INTERNAL
-    # ==================================================
     def pipeline(self):
         pipe = Pipeline()
         pipe.context["db"] = self.data
         pipe.context["backend"] = self
         return pipe
 
-    # ==================================================
-    # RAW DATASTORE METHODS
-    # ==================================================
     def get(self, key, default=None):
         return self.data.get(key, default)
 
@@ -42,9 +34,6 @@ class Backend:
     def close(self):
         self.data.close()
 
-    # ==================================================
-    # GENERIC OPERATIONS (NO PRESETS)
-    # ==================================================
     def increment(self, key, amount=1, default=0):
         pipe = self.pipeline()
 
