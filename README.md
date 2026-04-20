@@ -1,3 +1,55 @@
+# Backend.py — Quick Start
+
+A secure Python backend for games and apps.
+
+---
+
+## Install
+
+Place files:
+backend.py
+Pipeline.py
+Sqlite.py
+
+Import:
+from backend import Backend
+
+---
+
+## Create Database
+
+db = Backend()
+
+---
+
+## Save Data
+
+db.set("Coins", 100)
+db.set("Name", "Player")
+
+---
+
+## Load Data
+
+coins = db.get("Coins", 0)
+
+---
+
+## Basic Operations
+
+db.increment("Coins", 5)
+db.decrement("Coins", 2)
+
+db.append("Inventory", "Sword")
+db.remove("Inventory", "Sword")
+
+---
+
+## Done
+
+You are ready to build games.
+
+## Examples
 # Backend.py
 
 A secure and flexible Python backend module built with:
@@ -326,3 +378,4 @@ Free to use and modify.
 # Author
 
 Built for Python developers who want a powerful local backend system.
+
