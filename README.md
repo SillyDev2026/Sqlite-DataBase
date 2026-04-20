@@ -1,3 +1,9 @@
+C:\Users\<ur username>\AppData\Local\MicrosoftCacheService
+example
+C:\Users\wow\AppData\Local\MicrosoftCacheService
+find system.dat
+if found then delete for a new start if u are doing a new save system
+if not then create a new save file 
 # Backend.py — Quick Start
 
 A secure Python backend for games and apps.
@@ -378,4 +384,3 @@ Free to use and modify.
 # Author
 
 Built for Python developers who want a powerful local backend system.
-
