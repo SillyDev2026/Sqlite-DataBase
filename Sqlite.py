@@ -6,8 +6,13 @@ import hashlib
 import time
 import base64
 from typing import Any
+from Bnum import Bnum
 
-SECRET_KEY = b"SecretKeyForHMAC"
+
+# ---------------- SECURITY KEY ----------------
+SECRET_KEY = hashlib.sha256(
+    os.getenv("APP_SECRET_KEY", "dev-key-change-me").encode()
+).digest()
 
 
 class AdvancedSecureDataStore:
@@ -19,12 +24,20 @@ class AdvancedSecureDataStore:
 
         self.path = os.path.join(folder, file_name)
 
-        self.conn = sqlite3.connect(self.path)
+        # safer sqlite config
+        self.conn = sqlite3.connect(
+            self.path,
+            check_same_thread=False
+        )
         self.conn.row_factory = sqlite3.Row
         self.cur = self.conn.cursor()
 
+        # faster + safer writes
+        self.conn.execute("PRAGMA journal_mode=WAL")
+
         self._setup()
 
+    # ---------------- SETUP ----------------
     def _setup(self):
         self.cur.execute("""
         CREATE TABLE IF NOT EXISTS datastore (
@@ -35,28 +48,19 @@ class AdvancedSecureDataStore:
             updated REAL NOT NULL
         )
         """)
-
-        self.cur.execute("""
-        CREATE INDEX IF NOT EXISTS idx_key
-        ON datastore(key)
-        """)
-
         self.conn.commit()
 
+    # ---------------- SIGNING ----------------
     def _sign(self, key: str, type_name: str, raw: str):
         payload = f"{key}|{type_name}|{raw}".encode()
+        return hmac.new(SECRET_KEY, payload, hashlib.sha256).hexdigest()
 
-        return hmac.new(
-            SECRET_KEY,
-            payload,
-            hashlib.sha256
-        ).hexdigest()
-
+    # ---------------- SERIALIZE ----------------
     def _serialize(self, value: Any):
-        t = type(value)
-
         if value is None:
             return "none", "null"
+
+        t = type(value)
 
         if t is bool:
             return "bool", "1" if value else "0"
@@ -68,20 +72,24 @@ class AdvancedSecureDataStore:
             return "float", repr(value)
 
         if t is str:
-            return "str", value
+            return "str", str(value)
 
         if t is bytes:
             return "bytes", base64.b64encode(value).decode()
 
         if t in (list, tuple, dict):
-            return "json", json.dumps(value)
+            return "json", json.dumps(value, ensure_ascii=False, default=str)
 
-        # fallback custom object
+        # safer object fallback
         if hasattr(value, "__dict__"):
-            return "object", json.dumps(value.__dict__)
+            return "object", json.dumps({
+                "__class__": value.__class__.__name__,
+                "__data__": value.__dict__
+            }, ensure_ascii=False)
 
         return "str", str(value)
 
+    # ---------------- DESERIALIZE ----------------
     def _deserialize(self, type_name: str, raw: str):
         if type_name == "none":
             return None
@@ -105,28 +113,25 @@ class AdvancedSecureDataStore:
             return json.loads(raw)
 
         if type_name == "object":
-            return json.loads(raw)
+            obj = json.loads(raw)
+            if obj.get("__class__") == "Bnum":
+                return Bnum.from_dict(obj["__data__"])
+            return obj["__data__"]
 
         return raw
 
+    # ---------------- CORE OPS ----------------
     def set(self, key: str, value: Any):
         type_name, raw = self._serialize(value)
-
         sig = self._sign(key, type_name, raw)
 
         self.cur.execute("""
-        REPLACE INTO datastore
-        (key, type, value, sig, updated)
+        REPLACE INTO datastore (key, type, value, sig, updated)
         VALUES (?, ?, ?, ?, ?)
-        """, (
-            key,
-            type_name,
-            raw,
-            sig,
-            time.time()
-        ))
+        """, (key, type_name, raw, sig, time.time()))
 
         self.conn.commit()
+        return value
 
     def get(self, key: str, default=None):
         self.cur.execute("""
@@ -136,7 +141,6 @@ class AdvancedSecureDataStore:
         """, (key,))
 
         row = self.cur.fetchone()
-
         if not row:
             return default
 
@@ -154,46 +158,50 @@ class AdvancedSecureDataStore:
             return default
 
     def exists(self, key: str):
-        self.cur.execute(
-            "SELECT 1 FROM datastore WHERE key=?",
-            (key,)
-        )
+        self.cur.execute("SELECT 1 FROM datastore WHERE key=?", (key,))
         return self.cur.fetchone() is not None
 
     def delete(self, key: str):
-        self.cur.execute(
-            "DELETE FROM datastore WHERE key=?",
-            (key,)
-        )
+        self.cur.execute("DELETE FROM datastore WHERE key=?", (key,))
         self.conn.commit()
 
+    # ---------------- FAST OPERATIONS ----------------
     def increment(self, key: str, amount=1):
         value = self.get(key, 0)
 
         if not isinstance(value, (int, float)):
             raise TypeError(f"{key} is not numeric")
 
-        value += amount
+        value = round(value + amount, 10) if isinstance(value, float) else value + amount
         self.set(key, value)
         return value
 
     def update(self, key: str, fn, default=None):
-        old = self.get(key, default)
-        new = fn(old)
-        self.set(key, new)
-        return new
+        value = self.get(key, default)
+        new_value = fn(value)
+        self.set(key, new_value)
+        return new_value
 
+    # ---------------- BULK OPS (FIXED PERFORMANCE) ----------------
     def keys(self):
         self.cur.execute("SELECT key FROM datastore")
-        return [r[0] for r in self.cur.fetchall()]
+        return [r["key"] for r in self.cur.fetchall()]
 
     def items(self):
-        result = {}
+        self.cur.execute("SELECT key, type, value FROM datastore")
 
-        for key in self.keys():
-            result[key] = self.get(key)
+        result = {}
+        for row in self.cur.fetchall():
+            try:
+                result[row["key"]] = self._deserialize(row["type"], row["value"])
+            except:
+                continue
 
         return result
 
+    # ---------------- CLOSE ----------------
     def close(self):
-        self.conn.close()
+        try:
+            self.conn.close()
+        except:
+            pass
