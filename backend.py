@@ -1,21 +1,28 @@
 from Pipeline import Pipeline
-from DataStore import AdvancedSecureDataStore
+from Sqlite import AdvancedSecureDataStore
 
 
 class Backend:
     def __init__(self, file_name="system.dat"):
         self.data = AdvancedSecureDataStore(file_name)
+        self.closed = False
 
+    # ---------------- PIPELINE CORE ----------------
     def pipeline(self):
         pipe = Pipeline()
-        pipe.context["db"] = self.data
-        pipe.context["backend"] = self
+        pipe.context = {
+            "db": self.data,
+            "backend": self
+        }
         return pipe
 
+    # ---------------- BASIC DB OPS ----------------
     def get(self, key, default=None):
         return self.data.get(key, default)
 
     def set(self, key, value):
+        if self.closed:
+            return value
         self.data.set(key, value)
         return value
 
@@ -24,6 +31,7 @@ class Backend:
 
     def delete(self, key):
         self.data.delete(key)
+        return True
 
     def keys(self):
         return self.data.keys()
@@ -31,164 +39,78 @@ class Backend:
     def items(self):
         return self.data.items()
 
-    def close(self):
-        self.data.close()
-
-    def increment(self, key, amount=1, default=0):
+    # ---------------- SAFE PIPELINE RUNNER ----------------
+    def _run(self, key, op, default):
         pipe = self.pipeline()
 
-        (
-            pipe
-            .step(
-                lambda _, c: c["db"].get(key, default),
-                f"load_{key}"
-            )
-            .step(
-                lambda value, c: value + amount,
-                f"increment_{key}"
-            )
-            .step(
-                lambda value, c: (
-                    c["db"].set(key, value),
-                    value
-                )[1],
-                f"save_{key}"
-            )
-        )
+        pipe.step(lambda _, c: c["db"].get(key, default))
+        pipe.step(lambda v, c: op(v))
+        pipe.step(lambda v, c: (c["db"].set(key, v), v)[1])
 
-        result, _ = pipe.run(None)
-        return result
+        try:
+            result, _ = pipe.run(None)
+        except Exception:
+            return default
+
+        return result if result is not None else default
+
+    # ---------------- MATH OPS ----------------
+    def increment(self, key, amount=1, default=0):
+        return self._run(key, lambda v: v + amount, default)
 
     def decrement(self, key, amount=1, default=0):
-        return self.increment(key, -amount, default)
+        return self._run(key, lambda v: v - amount, default)
 
     def multiply(self, key, amount=2, default=0):
-        pipe = self.pipeline()
-
-        (
-            pipe
-            .step(
-                lambda _, c: c["db"].get(key, default),
-                f"load_{key}"
-            )
-            .step(
-                lambda value, c: value * amount,
-                f"multiply_{key}"
-            )
-            .step(
-                lambda value, c: (
-                    c["db"].set(key, value),
-                    value
-                )[1],
-                f"save_{key}"
-            )
-        )
-
-        result, _ = pipe.run(None)
-        return result
+        return self._run(key, lambda v: v * amount, default)
 
     def divide(self, key, amount=2, default=0):
-        pipe = self.pipeline()
-
-        (
-            pipe
-            .step(
-                lambda _, c: c["db"].get(key, default),
-                f"load_{key}"
-            )
-            .step(
-                lambda value, c: value / amount,
-                f"divide_{key}"
-            )
-            .step(
-                lambda value, c: (
-                    c["db"].set(key, value),
-                    value
-                )[1],
-                f"save_{key}"
-            )
+        return self._run(
+            key,
+            lambda v: v if amount == 0 else v / amount,
+            default
         )
 
-        result, _ = pipe.run(None)
-        return result
-
+    # ---------------- LIST OPS ----------------
     def append(self, key, value, default=None):
         if default is None:
             default = []
 
-        pipe = self.pipeline()
-
-        (
-            pipe
-            .step(
-                lambda _, c: c["db"].get(key, default),
-                f"load_{key}"
-            )
-            .step(
-                lambda arr, c: arr + [value],
-                f"append_{key}"
-            )
-            .step(
-                lambda arr, c: (
-                    c["db"].set(key, arr),
-                    arr
-                )[1],
-                f"save_{key}"
-            )
+        return self._run(
+            key,
+            lambda arr: arr + [value],
+            default
         )
-
-        result, _ = pipe.run(None)
-        return result
 
     def remove(self, key, value, default=None):
         if default is None:
             default = []
 
-        pipe = self.pipeline()
-
-        (
-            pipe
-            .step(
-                lambda _, c: c["db"].get(key, default),
-                f"load_{key}"
-            )
-            .step(
-                lambda arr, c: [x for x in arr if x != value],
-                f"remove_{key}"
-            )
-            .step(
-                lambda arr, c: (
-                    c["db"].set(key, arr),
-                    arr
-                )[1],
-                f"save_{key}"
-            )
+        return self._run(
+            key,
+            lambda arr: [x for x in arr if x != value],
+            default
         )
 
-        result, _ = pipe.run(None)
-        return result
-
+    # ---------------- UPDATE ----------------
     def update(self, key, fn, default=None):
         pipe = self.pipeline()
 
-        (
-            pipe
-            .step(
-                lambda _, c: c["db"].get(key, default),
-                f"load_{key}"
-            )
-            .step(
-                lambda value, c: fn(value),
-                f"update_{key}"
-            )
-            .step(
-                lambda value, c: (
-                    c["db"].set(key, value),
-                    value
-                )[1],
-                f"save_{key}"
-            )
-        )
+        pipe.step(lambda _, c: c["db"].get(key, default))
+        pipe.step(lambda v, c: fn(v))
+        pipe.step(lambda v, c: (c["db"].set(key, v), v)[1])
 
-        result, _ = pipe.run(None)
+        try:
+            result, _ = pipe.run(None)
+        except Exception:
+            return default
+
         return result
+
+    # ---------------- LIFECYCLE ----------------
+    def close(self):
+        if self.closed:
+            return
+
+        self.data.close()
+        self.closed = True
