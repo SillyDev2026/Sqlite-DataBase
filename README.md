@@ -1,6 +1,12 @@
+```text
 C:\Users\<ur username>\AppData\Local\MicrosoftCacheService
+```
+---
 example
+```text
 C:\Users\wow\AppData\Local\MicrosoftCacheService
+```
+---
 find system.dat
 if found then delete for a new start if u are doing a new save system
 if not then create a new save file 
