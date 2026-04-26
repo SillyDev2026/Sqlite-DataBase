@@ -3,7 +3,7 @@ from Sqlite import AdvancedSecureDataStore
 
 
 class Backend:
-    def __init__(self, file_name="system.dat"):
+    def __init__(self, file_name="data.db"):
         self.data = AdvancedSecureDataStore(file_name)
         self.closed = False
 
@@ -21,6 +21,7 @@ class Backend:
     def set(self, key, value):
         if self.closed:
             return value
+
         self.data.set(key, value)
         return value
 
@@ -28,6 +29,9 @@ class Backend:
         return self.data.exists(key)
 
     def delete(self, key):
+        if self.closed:
+            return False
+
         self.data.delete(key)
         return True
 
@@ -37,58 +41,136 @@ class Backend:
     def items(self):
         return self.data.items()
 
-    def _run(self, key, op, default):
-        pipe = self.pipeline()
+    def lock(self, key, ttl=120):
+        """
+        Claims session lock.
+        Returns True if locked.
+        Returns False if another server owns it.
+        """
+        return self.data.lock_session(key, ttl)
 
-        pipe.step(lambda _, c: c["db"].get(key, default))
-        pipe.step(lambda v, c: op(v))
-        pipe.step(lambda v, c: (c["db"].set(key, v), v)[1])
+    def unlock(self, key):
+        """
+        Releases lock if owned by this server.
+        """
+        self.data.unlock_session(key)
 
-        try:
-            result, _ = pipe.run(None)
-        except Exception:
-            return default
+    def is_locked(self, key):
+        """
+        Returns True if any active lock exists.
+        """
+        return self.data.is_locked(key)
 
-        return result if result is not None else default
+    def refresh_lock(self, key, ttl=120):
+        """
+        Refresh lock expiration if already owner.
+        """
+        return self.data.lock_session(key, ttl)
+
+    def session_get(self, key, default=None, ttl=120):
+        """
+        Locks then loads data.
+        """
+        if not self.lock(key, ttl):
+            return None
+
+        return self.get(key, default)
+
+    def session_save(self, key, value, ttl=120):
+        """
+        Save while refreshing lock.
+        """
+        if not self.refresh_lock(key, ttl):
+            return False
+
+        self.set(key, value)
+        return True
+
+    def session_release(self, key, value=None):
+        """
+        Optional save then unlock.
+        """
+        if value is not None:
+            self.set(key, value)
+
+        self.unlock(key)
+        return True
+
+    def _ensure_number(self, value, default):
+        return value if isinstance(value, (int, float)) else default
 
     def increment(self, key, amount=1, default=0):
-        return self._run(key, lambda v: v + amount, default)
+        value = self._ensure_number(
+            self.data.get(key, default),
+            default
+        )
+
+        value += amount
+        self.data.set(key, value)
+
+        return value
 
     def decrement(self, key, amount=1, default=0):
-        return self._run(key, lambda v: v - amount, default)
+        return self.increment(key, -amount, default)
 
     def multiply(self, key, amount=2, default=0):
-        return self._run(key, lambda v: v * amount, default)
+        value = self._ensure_number(
+            self.data.get(key, default),
+            default
+        )
+
+        value *= amount
+        self.data.set(key, value)
+
+        return value
 
     def divide(self, key, amount=2, default=0):
-        return self._run(key, lambda v: v if amount == 0 else v / amount, default)
-
-    def append(self, key, value, default=None):
-        if default is None:
-            default = []
-        return self._run(key, lambda arr: arr + [value], default)
-
-    def remove(self, key, value, default=None):
-        if default is None:
-            default = []
-        return self._run(key, lambda arr: [x for x in arr if x != value], default)
-
-    def update(self, key, fn, default=None):
-        pipe = self.pipeline()
-
-        pipe.step(lambda _, c: c["db"].get(key, default))
-        pipe.step(lambda v, c: fn(v))
-        pipe.step(lambda v, c: (c["db"].set(key, v), v)[1])
-
-        try:
-            result, _ = pipe.run(None)
-        except Exception:
+        if amount == 0:
             return default
 
-        return result
+        value = self._ensure_number(
+            self.data.get(key, default),
+            default
+        )
+
+        value = value / amount
+        self.data.set(key, value)
+
+        return value
+
+    def append(self, key, value, default=None):
+        arr = self.data.get(key, default or [])
+
+        if not isinstance(arr, list):
+            arr = []
+
+        arr.append(value)
+        self.data.set(key, arr)
+
+        return arr
+
+    def remove(self, key, value, default=None):
+        arr = self.data.get(key, default or [])
+
+        if not isinstance(arr, list):
+            arr = []
+
+        arr = [x for x in arr if x != value]
+        self.data.set(key, arr)
+
+        return arr
+
+    def update(self, key, fn, default=None):
+        value = self.data.get(key, default)
+        new_value = fn(value)
+
+        self.data.set(key, new_value)
+
+        return new_value
 
     def close(self):
         if self.closed:
             return
-        self.data.close()
+
         self.closed = True
+        self.data.close()
