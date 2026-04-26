@@ -314,7 +314,8 @@ class Bnum:
     
     def __str__(self):
         return self.format(self)
-
+    
+    @classmethod
     def to_dict(self):
         return {"man": self.man, "exp": self.exp}
     
