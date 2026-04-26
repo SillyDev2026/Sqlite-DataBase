@@ -7,7 +7,6 @@ class Backend:
         self.data = AdvancedSecureDataStore(file_name)
         self.closed = False
 
-    # ---------------- PIPELINE CORE ----------------
     def pipeline(self):
         pipe = Pipeline()
         pipe.context = {
@@ -16,7 +15,6 @@ class Backend:
         }
         return pipe
 
-    # ---------------- BASIC DB OPS ----------------
     def get(self, key, default=None):
         return self.data.get(key, default)
 
@@ -39,7 +37,6 @@ class Backend:
     def items(self):
         return self.data.items()
 
-    # ---------------- SAFE PIPELINE RUNNER ----------------
     def _run(self, key, op, default):
         pipe = self.pipeline()
 
@@ -54,7 +51,6 @@ class Backend:
 
         return result if result is not None else default
 
-    # ---------------- MATH OPS ----------------
     def increment(self, key, amount=1, default=0):
         return self._run(key, lambda v: v + amount, default)
 
@@ -65,34 +61,18 @@ class Backend:
         return self._run(key, lambda v: v * amount, default)
 
     def divide(self, key, amount=2, default=0):
-        return self._run(
-            key,
-            lambda v: v if amount == 0 else v / amount,
-            default
-        )
+        return self._run(key, lambda v: v if amount == 0 else v / amount, default)
 
-    # ---------------- LIST OPS ----------------
     def append(self, key, value, default=None):
         if default is None:
             default = []
-
-        return self._run(
-            key,
-            lambda arr: arr + [value],
-            default
-        )
+        return self._run(key, lambda arr: arr + [value], default)
 
     def remove(self, key, value, default=None):
         if default is None:
             default = []
+        return self._run(key, lambda arr: [x for x in arr if x != value], default)
 
-        return self._run(
-            key,
-            lambda arr: [x for x in arr if x != value],
-            default
-        )
-
-    # ---------------- UPDATE ----------------
     def update(self, key, fn, default=None):
         pipe = self.pipeline()
 
@@ -107,10 +87,8 @@ class Backend:
 
         return result
 
-    # ---------------- LIFECYCLE ----------------
     def close(self):
         if self.closed:
             return
-
         self.data.close()
         self.closed = True
